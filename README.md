@@ -1,8 +1,8 @@
 <h1 align="center">ScreenMask</h1>
 
 <p align="center">
-  在螢幕上蓋一塊模糊遮罩，擋住 UID 等個人資訊<br>
-  A blur overlay that hides your UID or anything else on screen
+  在螢幕上蓋一塊模糊遮罩，擋住不想被看到的內容<br>
+  A blur overlay that hides anything you don't want on screen
 </p>
 
 <p align="center">
@@ -12,14 +12,14 @@
 </p>
 
 <p align="center">
-  <img src="docs/menu.png" alt="ScreenMask tray menu" width="680">
+  <img src="docs/menu.png" alt="ScreenMask tray menu" width="820">
 </p>
 
 ---
 
 ## 繁體中文
 
-ScreenMask 是一個常駐在系統匣的小工具。它會在遊戲或任何視窗上蓋一塊模糊（或純色）遮罩，用來擋住 UID 之類的資訊。截圖、錄影、直播時都不用再後製。
+ScreenMask 是一個常駐在系統匣的小工具。它會在遊戲或任何視窗上蓋一塊模糊（或純色）遮罩，擋住不想被看到的內容。截圖、錄影、直播時都不用再後製。
 
 ### 功能
 
@@ -32,7 +32,7 @@ ScreenMask 是一個常駐在系統匣的小工具。它會在遊戲或任何視
   - 跟著指定視窗：只在那個視窗位於最前面時顯示，範圍限制在視窗內，視窗縮放時跟著等比例縮放
   - 全局顯示：一直顯示在螢幕上，可以放在任何一個螢幕
 - **調整位置**：直接拖曳移動、拖邊縮放。位置以最近的角落為基準記錄，預設在左上角
-- **自訂文字**：在遮罩上顯示文字，例如假的 UID，可以設定字型、大小、對齊、顏色、粗體、陰影
+- **自訂文字**：在遮罩上顯示文字，可以設定字型、大小、對齊、顏色、粗體、陰影
 - **開關**：左鍵點系統匣圖示，或按 `Ctrl+Alt+H`，不用結束程式
 - **不影響操作**：滑鼠會穿透遮罩，也不會搶走遊戲的焦點
 - **介面語言**：繁體中文／简体中文／English
@@ -45,7 +45,7 @@ ScreenMask 是一個常駐在系統匣的小工具。它會在遊戲或任何視
 3. 程式會常駐在系統匣（右下角）：
    - **左鍵**點圖示：開／關遮罩
    - **右鍵**點圖示：打開選單
-4. 第一次使用：右鍵 →「顯示在」選要遮的視窗（預設是星穹鐵道 `StarRail.exe`），再用「調整位置」把框拖到 UID 上，最後按「完成調整」。
+4. 第一次使用：右鍵 →「顯示在」選要遮的視窗（預設是星穹鐵道 `StarRail.exe`），再用「調整位置」把框拖到要遮的地方，最後按「完成調整」。
 
 > Windows Defender 可能會跳出警告，這是 PyInstaller 打包程式常見的誤判。按「其他資訊」→「仍要執行」即可。
 
@@ -69,22 +69,11 @@ pythonw ScreenMask.pyw
 
 或直接雙擊 `Start-ScreenMask.bat`。
 
-### 自己打包
-
-另外需要安裝 PyInstaller，然後在 PowerShell 執行：
-
-```bash
-pip install pyinstaller
-powershell -ExecutionPolicy Bypass -File .\build.ps1
-```
-
-成品會在 `dist\ScreenMask\`，同時產生 `dist\ScreenMask.zip`。
-
 ---
 
 ## English
 
-ScreenMask is a small tray app. It puts a blur (or solid color) overlay on top of a game or any window to hide things like your UID, so screenshots, recordings and streams need no editing afterwards.
+ScreenMask is a small tray app. It puts a blur (or solid color) overlay on top of a game or any window to hide what you don't want shown, so screenshots, recordings and streams need no editing afterwards.
 
 ### Features
 
@@ -97,7 +86,7 @@ ScreenMask is a small tray app. It puts a blur (or solid color) overlay on top o
   - Follow a window: shown only while that window is in front, kept inside it, and scaled with it when it resizes
   - Global: always on screen, on any monitor
 - **Adjust position**: drag to move, drag the edges to resize. The position is stored relative to the nearest corner; the default is the top-left
-- **Custom text**: show text on the mask, such as a fake UID, with font, size, alignment, color, bold and shadow options
+- **Custom text**: show text on the mask, with font, size, alignment, color, bold and shadow options
 - **On/off**: left-click the tray icon or press `Ctrl+Alt+H`; no need to quit
 - **Doesn't get in the way**: mouse clicks pass through the mask, and it never steals focus from the game
 - **UI language**: Traditional Chinese / Simplified Chinese / English
@@ -110,7 +99,7 @@ ScreenMask is a small tray app. It puts a blur (or solid color) overlay on top o
 3. ScreenMask lives in the system tray (bottom right):
    - **Left-click** the icon: turn the mask on/off
    - **Right-click** the icon: open the menu
-4. First time: right-click → "Show on" to pick the window to cover (Honkai: Star Rail `StarRail.exe` by default), then "Adjust position" to drag the box over your UID, and "Finish adjusting".
+4. First time: right-click → "Show on" to pick the window to cover (Honkai: Star Rail `StarRail.exe` by default), then "Adjust position" to drag the box over what you want to hide, and "Finish adjusting".
 
 > Windows Defender may show a warning. This is a common false positive for PyInstaller apps. Click "More info" → "Run anyway".
 
@@ -133,17 +122,6 @@ pythonw ScreenMask.pyw
 ```
 
 Or just double-click `Start-ScreenMask.bat`.
-
-### Build it yourself
-
-Install PyInstaller as well, then run in PowerShell:
-
-```bash
-pip install pyinstaller
-powershell -ExecutionPolicy Bypass -File .\build.ps1
-```
-
-The app ends up in `dist\ScreenMask\`, along with `dist\ScreenMask.zip`.
 
 ---
 
