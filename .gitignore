@@ -1,0 +1,8 @@
+# build output (upload ScreenMask.zip to GitHub Releases instead)
+dist/
+build/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
