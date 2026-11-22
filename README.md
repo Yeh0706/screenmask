@@ -19,7 +19,7 @@
 
 ## 繁體中文
 
-ScreenMask 是一個常駐在系統匣的小工具。它會在遊戲或任何視窗上蓋一塊模糊（或純色）遮罩，擋住不想被看到的內容。截圖、錄影、直播時都不用再後製。
+ScreenMask 是一個常駐在系統匣的小工具。它會在遊戲或任何視窗上蓋一塊模糊（或純色）遮罩，擋住不想被看到的內容。螢幕截圖、錄影時也會一起遮住（見[錄影與直播](#錄影與直播)）。
 
 ### 功能
 
@@ -27,7 +27,7 @@ ScreenMask 是一個常駐在系統匣的小工具。它會在遊戲或任何視
   - 柔和模糊：可以調強度（輕／中／重／很重），邊緣往外漸層，跟畫面自然融合
   - 系統模糊：Windows 內建的模糊效果，比較重
   - 純色：可自選顏色
-- **圓角**：無、小、中、大、全圓（膠囊形）五段
+- **圓角**：無、小、中、大、全圓（膠囊形）五段（柔和模糊、純色適用，系統模糊目前仍是直角）
 - **顯示在**
   - 跟著指定視窗：只在那個視窗位於最前面時顯示，範圍限制在視窗內，視窗縮放時跟著等比例縮放
   - 全局顯示：一直顯示在螢幕上，可以放在任何一個螢幕
@@ -51,6 +51,17 @@ ScreenMask 是一個常駐在系統匣的小工具。它會在遊戲或任何視
 
 **注意**：遊戲如果開「獨佔全螢幕」，遮罩可能蓋不上去，請改用「視窗化」或「無邊框」。
 
+### 錄影與直播
+
+| 擷取方式 | 遮得住嗎 |
+|---|---|
+| 螢幕截圖、OBS「顯示器擷取」、分享整個螢幕 | 可以 |
+| OBS「遊戲擷取」「視窗擷取」、只分享單一視窗 | **不行**，這些方式只抓該視窗本身，不含上面的遮罩 |
+
+- 「跟著視窗」時，目標視窗不在最前面，遮罩就會隱藏，這時畫面上露出來的內容也會被錄到。需要一直遮住請用「全局顯示」。
+- **模糊不等於看不到**：柔和模糊「輕」「中」下，較大的字仍可能認得出來。重要資訊請用「很重」或「純色」。
+- 正式錄影或直播前，請先錄一小段確認。
+
 ### 資料存放位置
 
 | 內容 | 位置 |
@@ -73,7 +84,7 @@ pythonw ScreenMask.pyw
 
 ## English
 
-ScreenMask is a small tray app. It puts a blur (or solid color) overlay on top of a game or any window to hide what you don't want shown, so screenshots, recordings and streams need no editing afterwards.
+ScreenMask is a small tray app. It puts a blur (or solid color) overlay on top of a game or any window to hide what you don't want shown. Screen captures and recordings include the mask too (see [Recording and streaming](#recording-and-streaming)).
 
 ### Features
 
@@ -81,7 +92,7 @@ ScreenMask is a small tray app. It puts a blur (or solid color) overlay on top o
   - Soft blur: adjustable strength (Light / Medium / Heavy / Very heavy), with a soft edge that fades outward into the picture
   - System blur: Windows' built-in blur, stronger
   - Solid color: pick any color
-- **Rounded corners**: None, Small, Medium, Large, Full (pill)
+- **Rounded corners**: None, Small, Medium, Large, Full (pill). Applies to soft blur and solid color; system blur is still square
 - **Show on**
   - Follow a window: shown only while that window is in front, kept inside it, and scaled with it when it resizes
   - Global: always on screen, on any monitor
@@ -104,6 +115,17 @@ ScreenMask is a small tray app. It puts a blur (or solid color) overlay on top o
 > Windows Defender may show a warning. This is a common false positive for PyInstaller apps. Click "More info" → "Run anyway".
 
 **Note**: if the game runs in exclusive fullscreen, the mask may not appear on top. Use windowed or borderless mode.
+
+### Recording and streaming
+
+| Capture method | Covered? |
+|---|---|
+| Screenshots, OBS Display Capture, sharing the whole screen | Yes |
+| OBS Game Capture / Window Capture, sharing a single window | **No.** These only grab that window and never include the mask |
+
+- When following a window, the mask hides while that window is not in front, and whatever is visible then gets recorded. Use Global to keep it covered at all times.
+- **Blurred is not unreadable**: with Light or Medium soft blur, larger text may still be legible. Use Very heavy or Solid color for anything important.
+- Record a short test before you record or stream for real.
 
 ### Where data is stored
 

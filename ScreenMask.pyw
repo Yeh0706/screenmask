@@ -13,7 +13,7 @@ import os
 import sys
 from ctypes import wintypes
 
-from PySide6.QtCore import QFileInfo, QLocale, QPoint, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QFileInfo, QLocale, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen,
                            QPixmap)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QDialog,
@@ -34,28 +34,11 @@ user32.GetForegroundWindow.restype = wintypes.HWND
 user32.GetAncestor.restype = wintypes.HWND
 user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
 kernel32.OpenProcess.restype = wintypes.HANDLE
-user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
 
-gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 _vp = ctypes.c_void_p
-user32.GetDC.restype = _vp
-user32.GetDC.argtypes = [_vp]
-user32.ReleaseDC.argtypes = [_vp, _vp]
-gdi32.CreateCompatibleDC.restype = _vp
-gdi32.CreateCompatibleDC.argtypes = [_vp]
-gdi32.CreateCompatibleBitmap.restype = _vp
-gdi32.CreateCompatibleBitmap.argtypes = [_vp, ctypes.c_int, ctypes.c_int]
-gdi32.SelectObject.restype = _vp
-gdi32.SelectObject.argtypes = [_vp, _vp]
-gdi32.BitBlt.argtypes = [_vp, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                         _vp, ctypes.c_int, ctypes.c_int, wintypes.DWORD]
-gdi32.GetDIBits.argtypes = [_vp, _vp, ctypes.c_uint, ctypes.c_uint, _vp, _vp, ctypes.c_uint]
-gdi32.DeleteObject.argtypes = [_vp]
-gdi32.DeleteDC.argtypes = [_vp]
-gdi32.CreateRoundRectRgn.restype = _vp
-gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
-user32.SetWindowRgn.argtypes = [wintypes.HWND, _vp, wintypes.BOOL]
-WDA_EXCLUDEFROMCAPTURE = 0x11
+user32.SetThreadDpiAwarenessContext.restype = _vp
+user32.SetThreadDpiAwarenessContext.argtypes = [_vp]
+DPI_UNAWARE = _vp(-1)
 SRCCOPY = 0x00CC0020
 
 GWL_EXSTYLE = -20
@@ -123,6 +106,8 @@ def load_config():
         with open(path, encoding="utf-8-sig") as f:
             saved = json.load(f)
         for k, v in saved.items():
+            if k == "in_capture":
+                continue  # 已移除的設定
             if k == "rect" and not (isinstance(v, dict) and "width" in v and "height" in v):
                 continue  # 位置資料不完整就用預設
             cfg[k] = v
@@ -338,11 +323,31 @@ def monitor_rect(x, y, w, h):
     """這塊範圍所在（或最接近）的螢幕範圍。"""
     rc = wintypes.RECT(x, y, x + w, y + h)
     mon = user32.MonitorFromRect(ctypes.byref(rc), 2)  # MONITOR_DEFAULTTONEAREST
+    return _monitor_info(mon)
+
+
+def _monitor_info(mon):
     mi = MONITORINFO()
     mi.cbSize = ctypes.sizeof(MONITORINFO)
     user32.GetMonitorInfoW(mon, ctypes.byref(mi))
     m = mi.rcMonitor
     return m.left, m.top, m.right - m.left, m.bottom - m.top
+
+
+def unaware_to_pixels(x, y, w, h):
+    """把舊版存的座標（程式不處理縮放時的座標）換算成實際像素。"""
+    old = user32.SetThreadDpiAwarenessContext(DPI_UNAWARE)
+    try:
+        rc = wintypes.RECT(x, y, x + w, y + h)
+        mon = user32.MonitorFromRect(ctypes.byref(rc), 2)
+        before = _monitor_info(mon)
+    finally:
+        if old:
+            user32.SetThreadDpiAwarenessContext(old)
+    after = _monitor_info(mon)
+    k = after[2] / before[2]
+    return [round(after[0] + (x - before[0]) * k), round(after[1] + (y - before[1]) * k),
+            round(w * k), round(h * k)]
 
 
 def window_rect(hwnd):
@@ -374,31 +379,76 @@ def set_blur(hwnd, enabled):
     user32.SetWindowCompositionAttribute(wintypes.HWND(hwnd), ctypes.byref(data))
 
 
-class BITMAPINFOHEADER(ctypes.Structure):
-    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
-                ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD),
-                ("biCompression", wintypes.DWORD), ("biSizeImage", wintypes.DWORD),
-                ("biXPelsPerMeter", wintypes.LONG), ("biYPelsPerMeter", wintypes.LONG),
-                ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+class _GUID(ctypes.Structure):
+    _fields_ = [("a", wintypes.DWORD), ("b", wintypes.WORD), ("c", wintypes.WORD),
+                ("d", ctypes.c_ubyte * 8)]
 
 
-def grab_screen(x, y, w, h):
-    """截取螢幕上一塊區域（實體像素）。遮罩本身設了不被截圖，所以截到的是底下的遊戲畫面。"""
-    sdc = user32.GetDC(None)
-    mdc = gdi32.CreateCompatibleDC(sdc)
-    bmp = gdi32.CreateCompatibleBitmap(sdc, w, h)
-    old = gdi32.SelectObject(mdc, bmp)
-    try:
-        gdi32.BitBlt(mdc, 0, 0, w, h, sdc, x, y, SRCCOPY)
-        bi = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)
-        buf = ctypes.create_string_buffer(w * h * 4)
-        gdi32.GetDIBits(mdc, bmp, 0, h, buf, ctypes.byref(bi), 0)
-        return QImage(buf.raw, w, h, w * 4, QImage.Format_RGB32).copy()
-    finally:
-        gdi32.SelectObject(mdc, old)
-        gdi32.DeleteObject(bmp)
-        gdi32.DeleteDC(mdc)
-        user32.ReleaseDC(None, sdc)
+class _MAGIMAGEHEADER(ctypes.Structure):
+    _fields_ = [("width", ctypes.c_uint), ("height", ctypes.c_uint), ("format", _GUID),
+                ("stride", ctypes.c_uint), ("offset", ctypes.c_uint), ("cbSize", ctypes.c_size_t)]
+
+
+_MAGCALLBACK = ctypes.WINFUNCTYPE(
+    wintypes.BOOL, wintypes.HWND, _vp, _MAGIMAGEHEADER, _vp, _MAGIMAGEHEADER,
+    wintypes.RECT, wintypes.RECT, wintypes.HRGN)
+
+
+class MagGrabber:
+    """用 Windows 放大鏡 API 擷取畫面，可以指定排除遮罩視窗。
+
+    遮罩本身會被錄影、截圖拍到，所以一般截圖會拍到遮罩自己；
+    放大鏡 API 能排除指定視窗，拿到的是遮罩底下的畫面。"""
+
+    def __init__(self, exclude_hwnd):
+        self.ok = False
+        self._image = None
+        self._size = None
+        try:
+            self.mag = mag = ctypes.WinDLL("Magnification.dll")
+            mag.MagSetWindowFilterList.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_int,
+                                                   ctypes.POINTER(wintypes.HWND)]
+            mag.MagSetImageScalingCallback.argtypes = [wintypes.HWND, _MAGCALLBACK]
+            mag.MagSetWindowSource.argtypes = [wintypes.HWND, wintypes.RECT]
+            create = user32.CreateWindowExW
+            create.restype = wintypes.HWND
+            create.argtypes = ([wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+                               + [ctypes.c_int] * 4
+                               + [wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, _vp])
+            if not mag.MagInitialize():
+                return
+            # 放大鏡控制項要有一個（隱藏的）外層視窗
+            self.host = create(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, "Static", "",
+                               0x80000000, 0, 0, 10, 10, None, None, None, None)
+            user32.SetLayeredWindowAttributes(wintypes.HWND(self.host), 0, 255, 2)
+            self.ctl = create(0, "Magnifier", "", 0x50000000, 0, 0, 10, 10, self.host, None, None, None)
+            if not self.host or not self.ctl:
+                return
+            self._cb = _MAGCALLBACK(self._on_image)  # 留住參照
+            if not mag.MagSetImageScalingCallback(self.ctl, self._cb):
+                return
+            windows = (wintypes.HWND * 1)(exclude_hwnd)
+            self.ok = bool(mag.MagSetWindowFilterList(self.ctl, 0, 1, windows))  # 0 = 排除
+        except (OSError, AttributeError):
+            self.ok = False
+
+    def _on_image(self, hwnd, src, sh, dst, dh, unclipped, clipped, rgn):
+        if src and sh.width and sh.height and sh.stride >= sh.width * 4:
+            data = ctypes.string_at(src + sh.offset, sh.stride * sh.height)
+            self._image = QImage(data, sh.width, sh.height, sh.stride, QImage.Format_RGB32).copy()
+        return True
+
+    def grab(self, x, y, w, h):
+        if not self.ok:
+            return None
+        if self._size != (w, h):
+            self._size = (w, h)
+            for wnd in (self.host, self.ctl):
+                user32.SetWindowPos(wnd, None, 0, 0, w, h, SWP_NOACTIVATE | SWP_NOMOVE | 0x4)
+        self._image = None
+        if not self.mag.MagSetWindowSource(self.ctl, wintypes.RECT(x, y, x + w, y + h)):
+            return None
+        return self._image
 
 
 def soft_blur(img, strength):
@@ -410,37 +460,6 @@ def soft_blur(img, strength):
         small = out.scaled(max(1, w // k), max(1, h // k), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         out = small.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
     return out
-
-
-def _ramp(n, start, end):
-    """長度 n 的透明度序列：前 start 格從透明漸變到不透明，後 end 格再漸變回透明。"""
-    out = []
-    for i in range(n):
-        a = 1.0
-        if i < start:
-            a = min(a, ((i + 0.5) / start) ** 1.5)
-        if i >= n - end:
-            a = min(a, ((n - i - 0.5) / end) ** 1.5)
-        out.append(round(255 * a))
-    return out
-
-
-def feather_mask(w, h, ring):
-    """遮色片：框選範圍內完全不透明，外圍 ring=(左, 上, 右, 下) 那一圈漸漸變透明。"""
-    l, t, r, b = ring
-    fmt = QImage.Format_ARGB32_Premultiplied
-    hx = QImage(w, 1, fmt)
-    for x, a in enumerate(_ramp(w, l, r)):
-        hx.setPixelColor(x, 0, QColor(0, 0, 0, a))
-    vy = QImage(1, h, fmt)
-    for y, a in enumerate(_ramp(h, t, b)):
-        vy.setPixelColor(0, y, QColor(0, 0, 0, a))
-    mask = hx.scaled(w, h, Qt.IgnoreAspectRatio, Qt.FastTransformation)
-    p = QPainter(mask)
-    p.setCompositionMode(QPainter.CompositionMode_DestinationIn)
-    p.drawImage(QRect(0, 0, w, h), vy)
-    p.end()
-    return mask
 
 
 def shape_mask(w, h, ring, radius, feather):
@@ -471,7 +490,7 @@ def shape_mask(w, h, ring, radius, feather):
 
 # ---------- 遮罩視窗 ----------
 
-EDGE = 10  # 調整模式下，邊緣幾像素內算縮放
+EDGE = 10  # 調整模式下，邊緣幾像素內算縮放（100% 縮放時的值）
 
 
 class Mask(QWidget):
@@ -488,13 +507,19 @@ class Mask(QWidget):
         self.drag = None  # (zone, cursor_start, rect_start)
         self.resize(10, 10)
         self.hwnd = int(self.winId())
+        # 所有位置都用實際像素，並以自己記的為準：視窗跨到不同縮放的螢幕時，Qt 會自己改視窗大小，
+        # 讀回來的數字不可靠。
+        self.geo = (0, 0, 10, 10)  # 遮罩視窗的範圍
+        self.sel = None            # 框選的範圍（不含外圍漸層）
+        if cfg.get("coords") != "px":
+            if cfg.get("screen_rect"):
+                cfg["screen_rect"] = unaware_to_pixels(*cfg["screen_rect"])
+            cfg["coords"] = "px"
         self.frame = None
         self.ring = (0, 0, 0, 0)  # 框選範圍外圍漸層的寬度（左、上、右、下）
         self._mask_cache = (None, None)
-        self._region_key = None
         self.on_hotkey = None  # 按下全域快速鍵時呼叫
-        # 讓遮罩不出現在截圖裡，柔和模糊才截得到底下的畫面。
-        user32.SetWindowDisplayAffinity(self.hwnd, WDA_EXCLUDEFROMCAPTURE)
+        self._grabber = None  # 第一次需要時才建立
         self.apply_style()
 
         self.timer = QTimer(self)
@@ -508,11 +533,18 @@ class Mask(QWidget):
     def capture(self):
         if self.cfg["mode"] != "soft" or not self.isVisible():
             return
-        x, y, w, h = window_rect(self.hwnd)
+        w, h = self.geo[2:]
         if w < 4 or h < 4:
             return
-        img = soft_blur(grab_screen(x, y, w, h), self.cfg.get("strength", 6))
-        feather = 0 if self.edit_mode else max(0, int(self.cfg.get("feather", 14)))
+        img = self.grab_below()
+        if img is None or img.isNull():
+            self.frame = None  # 抓不到畫面：paintEvent 會改蓋純色，不會露出底下的內容
+            self.update()
+            return
+        if img.width() != w or img.height() != h:
+            img = img.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        img = soft_blur(img, self.cfg.get("strength", 6) * self.ui_scale())
+        feather = 0 if self.edit_mode else self.feather_px()
         key = (w, h, self.ring, self.corner_radius(), feather)
         if self._mask_cache[0] != key:
             self._mask_cache = (key, shape_mask(w, h, self.ring, key[3], feather))
@@ -524,7 +556,24 @@ class Mask(QWidget):
         self.frame = out
         self.update()
 
+    def grab_below(self):
+        """取得遮罩底下的畫面（排除遮罩自己）。"""
+        if self._grabber is None:
+            self._grabber = MagGrabber(self.hwnd)
+        return self._grabber.grab(*self.geo)
+
     # --- 外觀 ---
+    def ui_scale(self):
+        """遮罩所在螢幕的縮放比例（1.0、1.25、1.5…）。"""
+        return max(0.5, self.devicePixelRatioF())
+
+    def feather_px(self):
+        return max(0, round(int(self.cfg.get("feather", 14)) * self.ui_scale()))
+
+    def pixel_rect(self):
+        """遮罩視窗的範圍（實際像素，左上角是 0,0）。"""
+        return QRect(0, 0, self.geo[2], self.geo[3])
+
     def apply_style(self):
         ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
         ex |= WS_EX_TOOLWINDOW | WS_EX_LAYERED
@@ -536,8 +585,6 @@ class Mask(QWidget):
         user32.SetWindowPos(self.hwnd, None, 0, 0, 0, 0,
                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED)
         set_blur(self.hwnd, self.cfg["mode"] == "blur")
-        self._region_key = None
-        self.update_region()
         if self.cfg["mode"] == "soft":
             self.capture()
         self.setCursor(Qt.SizeAllCursor if self.edit_mode else Qt.ArrowCursor)
@@ -545,15 +592,21 @@ class Mask(QWidget):
 
     def paintEvent(self, _):
         p = QPainter(self)
+        k = self.ui_scale()
+        p.scale(1 / self.devicePixelRatioF(), 1 / self.devicePixelRatioF())
+        rect = self.pixel_rect()
         r, g, b = self.cfg["color"]
         mode = self.cfg["mode"]
         if mode == "soft":
             p.setCompositionMode(QPainter.CompositionMode_Source)
-            p.fillRect(self.rect(), QColor(0, 0, 0, 1))
+            p.fillRect(rect, QColor(0, 0, 0, 1))
             if self.frame is not None:
                 p.setRenderHint(QPainter.SmoothPixmapTransform)
-                p.drawImage(self.rect(), self.frame)
+                p.drawImage(rect, self.frame)
             p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            if self.frame is None:
+                p.setRenderHint(QPainter.Antialiasing)
+                p.fillPath(self.shape_path(), QColor(r, g, b))  # 還沒有畫面時先蓋純色
             if self.edit_mode:
                 p.setRenderHint(QPainter.Antialiasing)
                 p.fillPath(self.shape_path(), QColor(r, g, b, 90))
@@ -562,7 +615,7 @@ class Mask(QWidget):
             if self.edit_mode:
                 alpha = max(alpha, 120)
             p.setCompositionMode(QPainter.CompositionMode_Source)
-            p.fillRect(self.rect(), Qt.transparent)
+            p.fillRect(rect, Qt.transparent)
             p.setCompositionMode(QPainter.CompositionMode_SourceOver)
             p.setRenderHint(QPainter.Antialiasing)
             # 全透明的像素在模糊模式下會被當成「沒有視窗」，所以至少留 1。
@@ -572,60 +625,41 @@ class Mask(QWidget):
             self.draw_text(p)
         if self.edit_mode:
             p.setRenderHint(QPainter.Antialiasing)
-            p.setPen(QPen(QColor(255, 200, 80), 2, Qt.DashLine))
+            p.setPen(QPen(QColor(255, 200, 80), 2 * k, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
-            p.drawPath(self.shape_path(inset=1))
+            p.drawPath(self.shape_path(inset=k))
             p.setPen(QColor(255, 255, 255))
             f = QFont("Microsoft JhengHei UI")
             if has_text:
                 # 有自訂文字時，提示縮小放在左上角，免得擋住預覽。
-                f.setPixelSize(11)
+                f.setPixelSize(round(11 * k))
                 p.setFont(f)
-                p.drawText(self.rect().adjusted(6, 3, -6, -3), Qt.AlignLeft | Qt.AlignTop, tr("hint_small"))
+                p.drawText(rect.adjusted(round(6 * k), round(3 * k), -round(6 * k), -round(3 * k)), Qt.AlignLeft | Qt.AlignTop, tr("hint_small"))
             else:
-                f.setPixelSize(max(11, min(16, self.height() // 4)))
+                f.setPixelSize(round(max(11 * k, min(16 * k, rect.height() / 4))))
                 p.setFont(f)
-                p.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, tr("hint_edit"))
+                p.drawText(rect, Qt.AlignCenter | Qt.TextWordWrap, tr("hint_edit"))
         p.end()
 
     def corner_radius(self):
         """框選範圍的圓角半徑（像素）。"""
         l, t, r, b = self.ring
-        w, h = self.width() - l - r, self.height() - t - b
+        w, h = self.geo[2] - l - r, self.geo[3] - t - b
         return round(max(0.0, min(1.0, float(self.cfg.get("corner", 0)))) * min(w, h) / 2, 1)
 
     def shape_path(self, inset=0):
         """框選範圍的圓角外框（不含外圍漸層）。"""
         l, t, r, b = self.ring
-        box = QRectF(self.rect()).adjusted(l + inset, t + inset, -r - inset, -b - inset)
+        box = QRectF(self.pixel_rect()).adjusted(l + inset, t + inset, -r - inset, -b - inset)
         rad = max(0.0, min(self.corner_radius() - inset, box.width() / 2, box.height() / 2))
         path = QPainterPath()
         path.addRoundedRect(box, rad, rad)
         return path
 
-    def update_region(self):
-        """系統模糊是整個視窗一起模糊，圓角時要把視窗本身裁成圓角形狀。"""
-        rad = self.corner_radius() if self.cfg["mode"] == "blur" else 0
-        key = (self.width(), self.height(), rad)
-        if key == self._region_key:
-            return
-        self._region_key = key
-        if rad > 0:
-            d = max(2, round(rad * 2))
-            rgn = gdi32.CreateRoundRectRgn(0, 0, self.width() + 1, self.height() + 1, d, d)
-            user32.SetWindowRgn(self.hwnd, rgn, True)  # 視窗接手 rgn，不用自己刪
-        else:
-            user32.SetWindowRgn(self.hwnd, None, True)
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        if getattr(self, "_region_key", "init") != "init":  # 建構途中還沒準備好就跳過
-            self.update_region()
-
     def draw_text(self, p):
         """在框選範圍內畫自訂文字（不含外圍漸層）。"""
         l, t, r, b = self.ring
-        box = self.rect().adjusted(l, t, -r, -b)
+        box = self.pixel_rect().adjusted(l, t, -r, -b)
         pad = max(2, box.height() // 10)
         box = box.adjusted(pad, 0, -pad, 0)
         f = QFont(self.cfg.get("text_font", "Microsoft JhengHei UI"))
@@ -639,7 +673,8 @@ class Mask(QWidget):
         p.setRenderHint(QPainter.TextAntialiasing)
         if self.cfg.get("text_shadow", True):
             p.setPen(QColor(0, 0, 0, 160))
-            p.drawText(box.translated(1, 1), flags, text)
+            off = max(1, round(self.ui_scale()))
+            p.drawText(box.translated(off, off), flags, text)
         p.setPen(QColor(*self.cfg.get("text_color", [255, 255, 255])))
         p.drawText(box, flags, text)
 
@@ -697,7 +732,7 @@ class Mask(QWidget):
         """柔和模糊時，視窗比框選範圍向外多一圈漸層（但不超出活動範圍）。回傳視窗範圍與每邊的漸層寬度。"""
         if self.cfg["mode"] != "soft" or self.edit_mode:
             return (x, y, w, h), (0, 0, 0, 0)
-        f = max(0, int(self.cfg.get("feather", 14)))
+        f = self.feather_px()
         gx, gy, gw, gh = self.area(x, y, w, h)
         l, t = min(f, x - gx), min(f, y - gy)
         r, b = min(f, gx + gw - (x + w)), min(f, gy + gh - (y + h))
@@ -706,7 +741,9 @@ class Mask(QWidget):
 
     def store_rect(self):
         """把目前框選的位置存起來（跟著視窗時換算成比例）。"""
-        x, y, w, h = window_rect(self.hwnd)
+        if not self.sel:
+            return
+        x, y, w, h = self.sel
         if self.is_global:
             self.cfg["screen_rect"] = [x, y, w, h]
             save_config(self.cfg)
@@ -728,8 +765,17 @@ class Mask(QWidget):
         save_config(self.cfg)
 
     def place(self, x, y, w, h):
-        user32.SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, max(w, 20), max(h, 12),
-                            SWP_NOACTIVATE | SWP_NOOWNERZORDER)
+        self.geo = (x, y, w, h)
+        # 跨到不同縮放的螢幕時，Qt 會在過程中改視窗大小，所以放好後再確認一次。
+        for _ in range(3):
+            if window_rect(self.hwnd) == self.geo:
+                break
+            user32.SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, w, h,
+                                SWP_NOACTIVATE | SWP_NOOWNERZORDER)
+        else:
+            return
+        user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
 
     def set_target(self, exe, title=""):
         """改成跟著指定的視窗。"""
@@ -789,7 +835,10 @@ class Mask(QWidget):
             self.show()
             self.apply_style()
         if self.drag is None:
-            outer, ring = self.outer_rect(*self.target_rect())
+            self.sel = self.target_rect()
+            outer, ring = self.outer_rect(*self.sel)
+            if ring != self.ring or outer != self.geo:
+                self.update()
             self.ring = ring
             self.place(*outer)
 
@@ -804,23 +853,21 @@ class Mask(QWidget):
             self.store_rect()
         return True
 
-    def zone_at(self, pos: QPoint):
-        r = self.rect()
-        left = pos.x() <= EDGE
-        right = pos.x() >= r.width() - EDGE
-        top = pos.y() <= EDGE
-        bottom = pos.y() >= r.height() - EDGE
-        return (left, right, top, bottom)
+    def zone_at_cursor(self):
+        x, y, w, h = self.geo
+        cx, cy = cursor_pos()
+        edge = EDGE * self.ui_scale()
+        return (cx - x <= edge, x + w - cx <= edge, cy - y <= edge, y + h - cy <= edge)
 
     def mousePressEvent(self, e):
         if self.edit_mode and e.button() == Qt.LeftButton:
-            self.drag = (self.zone_at(e.position().toPoint()), cursor_pos(), window_rect(self.hwnd))
+            self.drag = (self.zone_at_cursor(), cursor_pos(), self.geo)
 
     def mouseMoveEvent(self, e):
         if not self.edit_mode:
             return
         if self.drag is None:
-            left, right, top, bottom = self.zone_at(e.position().toPoint())
+            left, right, top, bottom = self.zone_at_cursor()
             if (left and top) or (right and bottom):
                 self.setCursor(Qt.SizeFDiagCursor)
             elif (right and top) or (left and bottom):
@@ -847,7 +894,9 @@ class Mask(QWidget):
             if bottom:
                 h = h + dy
         moving = not (left or right or top or bottom)
-        self.place(*self.clamp(x, y, w, h, keep_size=moving))
+        self.sel = self.clamp(x, y, w, h, keep_size=moving)
+        self.place(*self.sel)
+        self.update()
 
     def mouseReleaseEvent(self, e):
         if self.edit_mode and self.drag is not None:
@@ -985,7 +1034,7 @@ def menu_icon(name):
     if not glyph:
         return QIcon()
     icon = QIcon()
-    for size in (16, 20, 24, 32):
+    for size in (16, 20, 24, 28, 32, 40, 48, 64):
         pm = QPixmap(size, size)
         pm.fill(Qt.transparent)
         p = QPainter(pm)
@@ -1004,20 +1053,24 @@ def menu_icon(name):
 # ---------- 系統匣 ----------
 
 def make_icon(enabled=True):
-    """系統匣圖示：白色圓角框，下方一條白色遮罩條。暫停時變淡。"""
-    pm = QPixmap(64, 64)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    p.setOpacity(1.0 if enabled else 0.35)
-    p.setPen(QPen(QColor(255, 255, 255), 5))
-    p.setBrush(Qt.NoBrush)
-    p.drawRoundedRect(QRectF(5.5, 5.5, 53, 53), 13, 13)
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor(255, 255, 255))
-    p.drawRoundedRect(QRectF(15, 34, 34, 13), 6, 6)
-    p.end()
-    return QIcon(pm)
+    """系統匣圖示：白色圓角框，下方一條白色遮罩條。暫停時變淡。各種尺寸分開畫，縮放時才清楚。"""
+    icon = QIcon()
+    for size in (16, 20, 24, 28, 32, 40, 48, 64, 128):
+        pm = QPixmap(size, size)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setOpacity(1.0 if enabled else 0.35)
+        p.scale(size / 64, size / 64)
+        p.setPen(QPen(QColor(255, 255, 255), 5))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(5.5, 5.5, 53, 53), 13, 13)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255))
+        p.drawRoundedRect(QRectF(15, 34, 34, 13), 6, 6)
+        p.end()
+        icon.addPixmap(pm)
+    return icon
 
 
 def exe_icon(hwnd):
@@ -1166,7 +1219,6 @@ def build_menu(app, cfg, mask, tray, on_lang, on_enable, hotkey_ok):
         for val, a in corner_acts.items():
             a.setChecked(val == v)
         save_config(cfg)
-        mask.update_region()
         mask.update()
 
     for key, v in corners.items():
@@ -1245,9 +1297,6 @@ def main():
     if "--target" in sys.argv:
         targets = [sys.argv[sys.argv.index("--target") + 1]]
 
-    # 不讓 Qt 處理螢幕縮放（DPI unaware）。多螢幕、不同縮放時，所有座標交給 Windows 統一換算，
-    # 否則遮罩在 100% 與 150% 螢幕之間會被 Qt 自動縮放，位置和大小會跑掉。
-    os.environ["QT_QPA_PLATFORM"] = "windows:dpiawareness=0"
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(APP_NAME)
